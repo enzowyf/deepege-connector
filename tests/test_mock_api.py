@@ -366,6 +366,8 @@ def test_oauth_introspect_and_token_exchange(client: TestClient) -> None:
     assert body["active"] is True
     assert body["account_id"] == "acc_alice_oauth"
     assert "generate:video" in body["scopes"]
+    assert body["aud"] == "http://127.0.0.1:8081/mcp"
+    assert body["resource"] == "http://127.0.0.1:8081/mcp"
 
     revoked = client.post("/oauth/introspect", auth=basic, data={"token": "atok_revoked"})
     assert revoked.json()["active"] is False
@@ -390,6 +392,10 @@ def test_oauth_introspect_and_token_exchange(client: TestClient) -> None:
     me = client.get("/open/v1/me", headers=auth(token))
     assert me.status_code == 200
     assert me.json()["account_id"] == "acc_alice_oauth"
+
+    rejected = client.get("/open/v1/me", headers=auth("atok_alice"))
+    assert rejected.status_code == 401
+    assert _err(rejected)["code"] == "unauthorized"
 
 
 def test_missing_auth_and_rate_limit(client: TestClient) -> None:

@@ -91,6 +91,8 @@ class Account:
     token: str
     banned: bool = False
     revoked: bool = False
+    open_api_usable: bool = True
+    resource: str | None = None
 
 
 @dataclass
@@ -178,10 +180,12 @@ class Store:
         clock: Clock | None = None,
         advance_after_ms: int = DEFAULT_ADVANCE_AFTER_MS,
         advance_after_polls: int = DEFAULT_ADVANCE_AFTER_POLLS,
+        mcp_resource: str = "http://127.0.0.1:8081/mcp",
     ) -> None:
         self.clock = clock or Clock()
         self.advance_after_ms = advance_after_ms
         self.advance_after_polls = advance_after_polls
+        self.mcp_resource = mcp_resource
         self.accounts: dict[str, Account] = {}
         self.jobs: dict[str, JobRecord] = {}
         self.idempotency: dict[tuple[str, str, str], IdempotencyRecord] = {}
@@ -264,6 +268,25 @@ class Store:
             banned=True,
         )
         self._add_account(
+            token="atok_readonly",
+            account_id="acc_oauth_readonly",
+            auth_method=AuthMethod.OAUTH,
+            client_id="client_demo",
+            grant_id="grant_oauth_readonly",
+            balance=1000,
+            scopes=[Scope.ACCOUNT_READ, Scope.JOBS_READ],
+        )
+        self._add_account(
+            token="atok_wrong_resource",
+            account_id="acc_wrong_resource",
+            auth_method=AuthMethod.OAUTH,
+            client_id="client_demo",
+            grant_id="grant_wrong_resource",
+            balance=1000,
+            scopes=all_scopes,
+            resource="https://other.example/mcp",
+        )
+        self._add_account(
             token="sk-test-limited",
             account_id="acc_limited",
             auth_method=AuthMethod.API_KEY,
@@ -285,6 +308,8 @@ class Store:
         grant_id: str | None = None,
         banned: bool = False,
         revoked: bool = False,
+        open_api_usable: bool | None = None,
+        resource: str | None = None,
     ) -> None:
         principal = Principal(
             account_id=account_id,
@@ -295,12 +320,16 @@ class Store:
             grant_id=grant_id,
             scopes=list(scopes),
         )
+        if open_api_usable is None:
+            open_api_usable = not token.startswith("atok_")
         self.accounts[token] = Account(
             principal=principal,
             balance=balance,
             token=token,
             banned=banned,
             revoked=revoked,
+            open_api_usable=open_api_usable,
+            resource=resource,
         )
 
     def authenticate(self, token: str | None) -> Account:
@@ -321,6 +350,11 @@ class Store:
             raise ApiError(ErrorCode.UNAUTHORIZED, "The token has been revoked.")
         if account.banned:
             raise ApiError(ErrorCode.ACCOUNT_SUSPENDED, "This account has been suspended.")
+        if not account.open_api_usable:
+            raise ApiError(
+                ErrorCode.UNAUTHORIZED,
+                "This token cannot be used on the Open API.",
+            )
         return account
 
     def authenticate_service(self, client_id: str | None, client_secret: str | None) -> None:
@@ -561,7 +595,7 @@ class Store:
 
     def introspect(self, token: str) -> dict[str, Any]:
         account = self.lookup_token(token)
-        if account is None:
+        if account is None or account.principal.auth_method is AuthMethod.API_KEY:
             return {"active": False}
         if account.revoked:
             return {
@@ -579,6 +613,7 @@ class Store:
             }
         principal = account.principal
         now = int(self.now())
+        resource = account.resource or self.mcp_resource
         return {
             "active": True,
             "scope": " ".join(principal.scopes),
@@ -588,6 +623,8 @@ class Store:
             "exp": now + 3600,
             "iat": now,
             "sub": principal.account_id,
+            "aud": resource,
+            "resource": resource,
             "account_id": principal.account_id,
             "tenant_id": principal.tenant_id,
             "grant_id": principal.grant_id,
