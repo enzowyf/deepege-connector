@@ -1,0 +1,14 @@
+# Cordis profile patch snippet for @deepseek-ai/dsh-mcp-client.
+# Merge this `insert` into your profile patch (see clients/dsh/README.md).
+# Export DEEPEGE_API_KEY in the environment; do not put the key in this file.
+# Restart the harness after saving.
+
+- insert:
+    - id: mcp-deepege
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: deepege
+        transport: streamable-http
+        url: http://127.0.0.1:8081/mcp
+        headers:
+          Authorization: !!js '`Bearer ${process.env.DEEPEGE_API_KEY}`'

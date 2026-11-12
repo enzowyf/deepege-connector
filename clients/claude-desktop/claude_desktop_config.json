@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "deepege": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8081/mcp",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer YOUR_DEEPEGE_API_KEY"
+      }
+    }
+  }
+}

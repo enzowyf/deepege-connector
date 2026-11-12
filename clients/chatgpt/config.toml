@@ -1,0 +1,13 @@
+# Shared ChatGPT desktop / Codex CLI / IDE snippet for ~/.codex/config.toml
+# (or a project-scoped .codex/config.toml on a trusted project).
+# Merge the table below into your existing file. Do not put the API key in this
+# file; export DEEPEGE_API_KEY in the environment instead.
+#
+#   export DEEPEGE_API_KEY=sk-test-alice
+#
+# Codex rejects an inline `bearer_token` field. It reads the named env var and
+# sends `Authorization: Bearer <value>`.
+
+[mcp_servers.deepege]
+url = "http://127.0.0.1:8081/mcp"
+bearer_token_env_var = "DEEPEGE_API_KEY"

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "deepege": {
+      "url": "http://127.0.0.1:8081/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DEEPEGE_API_KEY}"
+      }
+    }
+  }
+}
