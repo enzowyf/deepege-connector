@@ -1,8 +1,4 @@
-"""Deepege connector: MCP server for the Deepege Open API.
-
-Tool implementations will be added in a later work package. This package
-currently ships shared models, configuration, and a server entry placeholder.
-"""
+"""Deepege connector: MCP server for the Deepege Open API."""
 
 from deepege_connector.models import ErrorCode, JobStatus, Principal
 

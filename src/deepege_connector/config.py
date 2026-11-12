@@ -22,9 +22,14 @@ class Settings:
     """Process configuration.
 
     ``api_base_url`` is the public Deepege Open API origin used by the
-    connector to call the main service. ``client_id`` / ``client_secret`` are
-    the official hosted connector's service credentials; a self-hosted
-    instance leaves them unset and uses a user API key instead.
+    connector to call the main service. ``api_key`` is an optional default
+    user API key for self-hosted deployments (the MCP request
+    ``Authorization`` header, when present, takes precedence).
+
+    ``client_id`` / ``client_secret`` are the official hosted connector's
+    service credentials. They are reserved for the hosted-mode OAuth seam
+    (introspection and token exchange) and are unused until that seam is
+    implemented.
     """
 
     api_base_url: str | None
@@ -32,6 +37,7 @@ class Settings:
     mcp_port: int
     client_id: str | None
     client_secret: str | None
+    api_key: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -46,4 +52,5 @@ class Settings:
             mcp_port=port,
             client_id=_env("DEEPEGE_CLIENT_ID"),
             client_secret=_env("DEEPEGE_CLIENT_SECRET"),
+            api_key=_env("DEEPEGE_API_KEY"),
         )
