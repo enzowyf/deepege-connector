@@ -2,7 +2,7 @@ English | [简体中文](README.zh-CN.md)
 
 # Deepege connector
 
-The Deepege connector is an open-source service for MCP clients (Python, official MCP Python SDK 2.x, Streamable HTTP). It talks to the main service through the versioned Deepege Open API (`/open/v1`) and provides capabilities such as creating a video from a single prompt. This repository currently delivers work package W2: shared types, the OpenAPI contract, an in-memory mock of the main service, and an MCP server that can run against the mock (or a real Open API).
+The Deepege connector is an open-source service for MCP clients (Python, official MCP Python SDK 2.x, Streamable HTTP). It talks to the main service through the versioned Deepege Open API (`/open/v1`) and provides capabilities such as creating a video from a single prompt. This repository currently delivers work package W2: shared types, the OpenAPI contract, an in-memory mock of the main service, and an MCP server that can run against the mock (or a real Open API). It also includes MCP client setup guides, a usage skill, and a mock quickstart.
 
 ## Local development
 
@@ -122,6 +122,19 @@ An MCP client should use Streamable HTTP, point at `http://127.0.0.1:8081/mcp`, 
 Configuration field names may differ slightly across clients, but the transport is always Streamable HTTP, the URL is `/mcp`, and authentication is `Authorization: Bearer <api_key>`. If the client cannot set custom headers yet, set `DEEPEGE_API_KEY` on the process; that default is used only when the request has no Authorization header.
 
 This is self-hosted mode: the connector forwards the user API key unchanged as a Bearer token to `/open/v1`. The official hosted-mode OAuth seam is reserved as a TODO and is not implemented: the main service will issue access tokens bound to the MCP resource (RFC 8707); the connector will introspect them (RFC 7662) and then use token-exchange (RFC 8693) for a short-lived downstream token to call the Open API, and will not pass the user-facing OAuth access token through.
+
+
+Per-client setup templates and notes (WorkBuddy, ChatGPT including Codex, dsh, Grok Bot, Claude, and a generic Streamable HTTP / `mcp-remote` fallback) are in [`clients/`](clients/README.md). Formats that could not be confirmed against official docs are marked unverified.
+
+A recommended agent workflow — create, poll with `poll_after_ms`, show the plan, and ask a human before confirming any spend — is in [`skills/deepege-video/SKILL.md`](skills/deepege-video/SKILL.md).
+
+To walk through that loop against the in-process mock (no need to start the mock or MCP processes first):
+
+```bash
+python examples/quickstart/run.py --yes
+```
+
+`--yes` confirms the plan without prompting and is for this demo and CI only. Omit it to review the plan interactively. To use a running Open API instead, pass `--api-base-url http://127.0.0.1:8080` and set `DEEPEGE_API_KEY`.
 
 ### Tools
 

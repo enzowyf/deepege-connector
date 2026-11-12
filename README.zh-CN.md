@@ -2,7 +2,7 @@
 
 # Deepege connector
 
-Deepege 连接器是面向 MCP 客户端的开源服务（Python，官方 MCP Python SDK 2.x，Streamable HTTP）。它通过版本化的 Deepege Open API（`/open/v1`）调用主服务，提供一句话出片等能力。本仓库目前交付到工作包 W2：共享类型、OpenAPI 契约、内存版 mock 主服务，以及可对 mock（或真实 Open API）运行的 MCP 服务。
+Deepege 连接器是面向 MCP 客户端的开源服务（Python，官方 MCP Python SDK 2.x，Streamable HTTP）。它通过版本化的 Deepege Open API（`/open/v1`）调用主服务，提供一句话出片等能力。本仓库目前交付到工作包 W2：共享类型、OpenAPI 契约、内存版 mock 主服务，以及可对 mock（或真实 Open API）运行的 MCP 服务。另外还包含 MCP 客户端接入说明、用法技能和 mock 快速试用。
 
 ## 本地开发
 
@@ -122,6 +122,19 @@ MCP 客户端应使用 Streamable HTTP，指向 `http://127.0.0.1:8081/mcp`，�
 不同客户端的配置字段可能略有差异，但传输均为 Streamable HTTP，URL 为 `/mcp`，鉴权为 `Authorization: Bearer <api_key>`。若客户端暂时无法自定义请求头，可为进程设置 `DEEPEGE_API_KEY`，该默认值仅在请求未带 Authorization 时使用。
 
 这是自建（self-hosted）模式：连接器把用户 API key 原样作为 Bearer 转发给 `/open/v1`。官方托管模式的 OAuth 缝预留为 TODO，尚未实现：主服务将签发绑定到 MCP 资源的访问令牌（RFC 8707），连接器通过 introspection（RFC 7662）校验后，再用 token-exchange（RFC 8693）换成短时下游令牌调用 Open API，而不会把面向用户的 OAuth 访问令牌直接透传。
+
+
+各客户端的配置模板和说明（WorkBuddy、含 Codex 的 ChatGPT、dsh、Grok Bot、Claude，以及通用的 Streamable HTTP / `mcp-remote` 回退）见 [`clients/`](clients/README.zh-CN.md)。对照官方文档未能确认的格式会标明未核实。
+
+推荐的代理流程——创建、按 `poll_after_ms` 轮询、展示方案，并在确认任何消耗之前询问人工——见 [`skills/deepege-video/SKILL.zh-CN.md`](skills/deepege-video/SKILL.zh-CN.md)。
+
+若要对进程内 mock 走一遍该循环（不必先启动 mock 或 MCP 进程）：
+
+```bash
+python examples/quickstart/run.py --yes
+```
+
+`--yes` 会在不问的情况下确认方案，仅用于本演示和 CI。去掉该参数即可交互式查看方案。若要对已启动的 Open API 运行，请传入 `--api-base-url http://127.0.0.1:8080` 并设置 `DEEPEGE_API_KEY`。
 
 ### 工具
 
