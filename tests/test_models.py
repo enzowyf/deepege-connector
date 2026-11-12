@@ -63,3 +63,41 @@ def test_settings_from_env(monkeypatch: MonkeyPatch) -> None:
     assert settings.api_base_url == "https://example.com"
     assert settings.mcp_port == 9090
     assert settings.mcp_host == "127.0.0.1"
+
+
+def test_dump_job_keeps_nullable_fields() -> None:
+    from deepege_connector.models import Job, JobStatus, Plan, Result, dump_job
+
+    job = Job(
+        job_id="job_1",
+        status=JobStatus.SUCCEEDED,
+        plan=Plan(
+            plan_id="plan_1",
+            title=None,
+            duration_seconds=None,
+            style=None,
+            estimated_credits=10,
+            max_credits=None,
+            credit_balance=100,
+            charges_before_confirm=None,
+        ),
+        result=Result(
+            play_url="https://media.example.com/play/job_1?sig=1",
+            play_url_expires_at="2026-01-01T00:00:00Z",
+            cover_url=None,
+            cover_url_expires_at=None,
+            web_url="https://www.deepege.com/works/job_1",
+            duration_seconds=None,
+            actual_credits=None,
+        ),
+    )
+    data = dump_job(job)
+    assert data["plan"]["title"] is None
+    assert data["plan"]["style"] is None
+    assert data["plan"]["duration_seconds"] is None
+    assert data["plan"]["max_credits"] is None
+    assert data["plan"]["charges_before_confirm"] is None
+    assert data["result"]["cover_url"] is None
+    assert data["result"]["cover_url_expires_at"] is None
+    assert data["result"]["duration_seconds"] is None
+    assert data["result"]["actual_credits"] is None

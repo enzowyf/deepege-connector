@@ -400,6 +400,7 @@ def test_missing_auth_and_rate_limit(client: TestClient) -> None:
     assert limited.status_code == 429
     assert _err(limited)["code"] == "rate_limited"
     assert _err(limited)["retryable"] is True
+    assert limited.headers.get("Retry-After") == "12"
 
 
 def test_disabled_key_returns_unauthorized(client: TestClient) -> None:

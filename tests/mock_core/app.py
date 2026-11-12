@@ -44,7 +44,10 @@ def create_app(store: Store | None = None) -> FastAPI:
     @app.exception_handler(ApiError)
     async def api_error_handler(_request: Request, exc: ApiError) -> JSONResponse:
         status = ERROR_HTTP_STATUS[exc.code]
-        return JSONResponse(status_code=status, content=exc.to_body())
+        headers: dict[str, str] = {}
+        if exc.retry_after is not None:
+            headers["Retry-After"] = str(exc.retry_after)
+        return JSONResponse(status_code=status, content=exc.to_body(), headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(

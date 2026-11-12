@@ -423,11 +423,16 @@ def dump_job(job: Job) -> dict[str, Any]:
     """Serialize a job, keeping nullable contract fields present as null."""
     data = job.model_dump(mode="json", exclude_none=True)
     if job.plan is not None and "plan" in data:
+        data["plan"]["title"] = job.plan.title
+        data["plan"]["style"] = job.plan.style
+        data["plan"]["duration_seconds"] = job.plan.duration_seconds
         data["plan"]["max_credits"] = job.plan.max_credits
+        data["plan"]["charges_before_confirm"] = job.plan.charges_before_confirm
     if job.result is not None and "result" in data:
         data["result"]["cover_url"] = job.result.cover_url
         data["result"]["cover_url_expires_at"] = job.result.cover_url_expires_at
         data["result"]["duration_seconds"] = job.result.duration_seconds
+        data["result"]["actual_credits"] = job.result.actual_credits
     return data
 
 

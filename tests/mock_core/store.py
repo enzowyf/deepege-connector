@@ -60,6 +60,7 @@ class ApiError(Exception):
         recharge_url: str | None = None,
         required_scope: str | None = None,
         question: Question | None = None,
+        retry_after: int | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -69,6 +70,7 @@ class ApiError(Exception):
         self.recharge_url = recharge_url
         self.required_scope = required_scope
         self.question = question
+        self.retry_after = retry_after
 
     def to_body(self) -> dict[str, Any]:
         return error_envelope(
@@ -307,7 +309,11 @@ class Store:
         if token == "sk-test-disabled":
             raise ApiError(ErrorCode.UNAUTHORIZED, "This API key has been disabled.")
         if token == "sk-test-limited":
-            raise ApiError(ErrorCode.RATE_LIMITED, "Too many requests.")
+            raise ApiError(
+                ErrorCode.RATE_LIMITED,
+                "Too many requests.",
+                retry_after=12,
+            )
         account = self.accounts.get(token)
         if account is None:
             raise ApiError(ErrorCode.UNAUTHORIZED, "Invalid bearer token.")
