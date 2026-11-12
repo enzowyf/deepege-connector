@@ -121,7 +121,9 @@ MCP 客户端应使用 Streamable HTTP，指向 `http://127.0.0.1:8081/mcp`，�
 
 不同客户端的配置字段可能略有差异，但传输均为 Streamable HTTP，URL 为 `/mcp`，鉴权为 `Authorization: Bearer <api_key>`。若客户端暂时无法自定义请求头，可为进程设置 `DEEPEGE_API_KEY`，该默认值仅在请求未带 Authorization 时使用。
 
-这是自建（self-hosted）模式：连接器把用户 API key 原样作为 Bearer 转发给 `/open/v1`。官方托管模式的 OAuth 缝预留为 TODO，尚未实现：主服务将签发绑定到 MCP 资源的访问令牌（RFC 8707），连接器通过 introspection（RFC 7662）校验后，再用 token-exchange（RFC 8693）换成短时下游令牌调用 Open API，而不会把面向用户的 OAuth 访问令牌直接透传。
+这是自建（self-hosted）模式，也是默认模式：连接器把用户 API key 原样作为 Bearer 转发给 `/open/v1`。
+
+托管模式（`DEEPEGE_AUTH_MODE=hosted`）会让连接器作为 MCP 资源服务器运行。它在 `/.well-known/oauth-protected-resource`（再加上资源路径）发布 RFC 9728 元数据，对未认证的 `/mcp` 请求返回 `WWW-Authenticate` 质询，通过 introspection（RFC 7662）校验调用方的访问令牌，要求其处于 active、绑定到 `DEEPEGE_MCP_RESOURCE`（`aud` / `resource`），并包含连接器所需的 scope，再用 token-exchange（RFC 8693）换成短时下游令牌调用 `/open/v1`。面向用户的 OAuth 访问令牌不会被透传。下游令牌会缓存到即将过期之前。
 
 
 各客户端的配置模板和说明（WorkBuddy、含 Codex 的 ChatGPT、dsh、Grok Bot、Claude，以及通用的 Streamable HTTP / `mcp-remote` 回退）见 [`clients/`](clients/README.zh-CN.md)。对照官方文档未能确认的格式会标明未核实。
@@ -159,7 +161,23 @@ python examples/quickstart/run.py --yes
 - `DEEPEGE_API_BASE_URL`：主服务 Open API 的公开 origin（必填）
 - `DEEPEGE_MCP_HOST` / `DEEPEGE_MCP_PORT`：MCP 监听地址（默认 `127.0.0.1:8080`）
 - `DEEPEGE_API_KEY`：自建实例的默认用户 API key（请求头优先）
-- `DEEPEGE_CLIENT_ID` / `DEEPEGE_CLIENT_SECRET`：官方托管实例的服务凭证（预留给托管模式的 introspection / token-exchange，当前未使用）
+- `DEEPEGE_CLIENT_ID` / `DEEPEGE_CLIENT_SECRET`：官方托管实例的服务凭证（用于托管模式的 introspection 和 token-exchange）
+- `DEEPEGE_AUTH_MODE`：`self_hosted`（默认）或 `hosted`
+- `DEEPEGE_MCP_RESOURCE`：MCP 资源标识（RFC 8707 / RFC 9728），托管模式必填；例如 `https://mcp.example.com/mcp`
+- `DEEPEGE_AUTHORIZATION_SERVER`：受保护资源元数据中公布的授权服务器 origin（默认与 `DEEPEGE_API_BASE_URL` 相同）
+
+若要以托管模式运行（MCP 地址必须是客户端将使用的公开资源标识）：
+
+```bash
+export DEEPEGE_AUTH_MODE=hosted
+export DEEPEGE_API_BASE_URL=https://api.example.com
+export DEEPEGE_CLIENT_ID=your-client-id
+export DEEPEGE_CLIENT_SECRET=your-client-secret
+export DEEPEGE_MCP_RESOURCE=https://mcp.example.com/mcp
+export DEEPEGE_MCP_HOST=0.0.0.0
+export DEEPEGE_MCP_PORT=8080
+deepege-connector
+```
 
 ## Docker
 

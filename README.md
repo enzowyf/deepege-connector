@@ -121,7 +121,9 @@ An MCP client should use Streamable HTTP, point at `http://127.0.0.1:8081/mcp`, 
 
 Configuration field names may differ slightly across clients, but the transport is always Streamable HTTP, the URL is `/mcp`, and authentication is `Authorization: Bearer <api_key>`. If the client cannot set custom headers yet, set `DEEPEGE_API_KEY` on the process; that default is used only when the request has no Authorization header.
 
-This is self-hosted mode: the connector forwards the user API key unchanged as a Bearer token to `/open/v1`. The official hosted-mode OAuth seam is reserved as a TODO and is not implemented: the main service will issue access tokens bound to the MCP resource (RFC 8707); the connector will introspect them (RFC 7662) and then use token-exchange (RFC 8693) for a short-lived downstream token to call the Open API, and will not pass the user-facing OAuth access token through.
+This is self-hosted mode, the default: the connector forwards the user API key unchanged as a Bearer token to `/open/v1`.
+
+Hosted mode (`DEEPEGE_AUTH_MODE=hosted`) turns the connector into an MCP resource server. It publishes RFC 9728 metadata at `/.well-known/oauth-protected-resource` (plus the resource path), challenges unauthenticated `/mcp` requests with `WWW-Authenticate`, introspects the caller’s access token (RFC 7662), requires it to be active, bound to `DEEPEGE_MCP_RESOURCE` (`aud` / `resource`), and to include the connector scopes, then exchanges it (RFC 8693) for a short-lived downstream token used to call `/open/v1`. The user-facing OAuth access token is never passed through. Downstream tokens are cached until shortly before they expire.
 
 
 Per-client setup templates and notes (WorkBuddy, ChatGPT including Codex, dsh, Grok Bot, Claude, and a generic Streamable HTTP / `mcp-remote` fallback) are in [`clients/`](clients/README.md). Formats that could not be confirmed against official docs are marked unverified.
@@ -159,7 +161,23 @@ All addresses and credentials are injected from environment variables at runtime
 - `DEEPEGE_API_BASE_URL`: public origin of the main service Open API (required)
 - `DEEPEGE_MCP_HOST` / `DEEPEGE_MCP_PORT`: MCP listen address (default `127.0.0.1:8080`)
 - `DEEPEGE_API_KEY`: default user API key for a self-hosted instance (the request header takes precedence)
-- `DEEPEGE_CLIENT_ID` / `DEEPEGE_CLIENT_SECRET`: service credentials for the official hosted instance (reserved for hosted-mode introspection / token-exchange; currently unused)
+- `DEEPEGE_CLIENT_ID` / `DEEPEGE_CLIENT_SECRET`: service credentials for the official hosted instance (used for hosted-mode introspection and token-exchange)
+- `DEEPEGE_AUTH_MODE`: `self_hosted` (default) or `hosted`
+- `DEEPEGE_MCP_RESOURCE`: MCP resource identifier (RFC 8707 / RFC 9728), required in hosted mode; for example `https://mcp.example.com/mcp`
+- `DEEPEGE_AUTHORIZATION_SERVER`: authorization server origin advertised in protected-resource metadata (defaults to `DEEPEGE_API_BASE_URL`)
+
+To run in hosted mode (the MCP URL must be the public resource identifier clients will use):
+
+```bash
+export DEEPEGE_AUTH_MODE=hosted
+export DEEPEGE_API_BASE_URL=https://api.example.com
+export DEEPEGE_CLIENT_ID=your-client-id
+export DEEPEGE_CLIENT_SECRET=your-client-secret
+export DEEPEGE_MCP_RESOURCE=https://mcp.example.com/mcp
+export DEEPEGE_MCP_HOST=0.0.0.0
+export DEEPEGE_MCP_PORT=8080
+deepege-connector
+```
 
 ## Docker
 
