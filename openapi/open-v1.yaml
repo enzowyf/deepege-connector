@@ -48,6 +48,15 @@ info:
       and it is not a conversation or session id. `plan_id` and `question_id`
       are also opaque.
 
+    Rate limits:
+      Each caller (a user API key, or a partner) has one fixed 60-second
+      window shared by all endpoints in this batch. The operator configures
+      the limit; the default is 60 requests per window. Rejected requests do
+      not count against the window. Over the limit the API returns HTTP 429
+      with `rate_limited`, `retryable=true`, and a `Retry-After` header in
+      seconds until the window resets. If the limiter itself is unavailable,
+      the API fails closed with HTTP 500 `internal_error`, `retryable=true`.
+
     Job status mapping (seven values):
       - `planning`: a plan is still being prepared; nothing is ready to confirm.
       - `awaiting_confirmation`: a plan and quote are ready for the user.
@@ -476,6 +485,12 @@ components:
       description: |
         Unified error envelope for this batch of endpoints. Not the
         `{code: int, message, data}` shape used by pre-existing `/open/v1` routes.
+      headers:
+        Retry-After:
+          description: Seconds until the caller's rate-limit window resets. Sent with HTTP 429 `rate_limited`.
+          schema:
+            type: integer
+            minimum: 1
       content:
         application/json:
           schema:
