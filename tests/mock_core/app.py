@@ -41,6 +41,15 @@ def create_app(store: Store | None = None) -> FastAPI:
     )
     app.state.store = store
 
+    @app.middleware("http")
+    async def record_oauth_success(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        if request.url.path.startswith("/oauth/") and 200 <= response.status_code < 300:
+            client_id = getattr(request.state, "oauth_client_id", None)
+            if client_id:
+                request.app.state.store.record_oauth_request(client_id)
+        return response
+
     @app.exception_handler(ApiError)
     async def api_error_handler(_request: Request, exc: ApiError) -> JSONResponse:
         status = ERROR_HTTP_STATUS[exc.code]
@@ -86,6 +95,9 @@ def create_app(store: Store | None = None) -> FastAPI:
         client_id = credentials.username if credentials is not None else None
         client_secret = credentials.password if credentials is not None else None
         request.app.state.store.authenticate_service(client_id, client_secret)
+        assert client_id is not None
+        request.app.state.store.enforce_oauth_rate_limit(client_id)
+        request.state.oauth_client_id = client_id
 
     @app.get("/health")
     def health() -> dict[str, str]:

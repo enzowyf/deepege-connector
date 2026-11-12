@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
@@ -478,3 +479,118 @@ def test_time_based_advance(store: Store, clock: Clock) -> None:
     clock.advance(0.25)
     second = client.get(f"/open/v1/jobs/{job_id}", headers=auth(ALICE)).json()
     assert second["status"] == "awaiting_confirmation"
+
+
+def test_oauth_rate_limit_per_client_id(clock: Clock, store: Store) -> None:
+    store.rate_limit = 3
+    client = TestClient(create_app(store))
+    basic = ("test-mcp-client", "test-mcp-secret")
+    store.service_clients["test-mcp-other"] = "test-mcp-other-secret"
+    other = ("test-mcp-other", "test-mcp-other-secret")
+
+    for _ in range(3):
+        response = client.post("/oauth/introspect", auth=basic, data={"token": "atok_alice"})
+        assert response.status_code == 200, response.text
+
+    limited = client.post("/oauth/introspect", auth=basic, data={"token": "atok_alice"})
+    assert limited.status_code == 429
+    assert _err(limited)["code"] == "rate_limited"
+    assert _err(limited)["retryable"] is True
+    assert limited.headers.get("Retry-After") == "60"
+
+    # A 429 does not consume another slot.
+    again = client.post("/oauth/introspect", auth=basic, data={"token": "atok_alice"})
+    assert again.status_code == 429
+
+    # A rejected request (bad secret) is not counted, and the window stays full.
+    unauthorized = client.post(
+        "/oauth/introspect",
+        auth=("test-mcp-client", "wrong-secret"),
+        data={"token": "atok_alice"},
+    )
+    assert unauthorized.status_code == 401
+    still_limited = client.post("/oauth/introspect", auth=basic, data={"token": "atok_alice"})
+    assert still_limited.status_code == 429
+
+    # Limits are per service client_id.
+    isolated = client.post("/oauth/introspect", auth=other, data={"token": "atok_alice"})
+    assert isolated.status_code == 200, isolated.text
+
+    clock.advance(60)
+    reset = client.post("/oauth/introspect", auth=basic, data={"token": "atok_alice"})
+    assert reset.status_code == 200, reset.text
+
+
+def test_oauth_rejected_handler_errors_are_not_counted(clock: Clock, store: Store) -> None:
+    store.rate_limit = 2
+    client = TestClient(create_app(store))
+    basic = ("test-mcp-client", "test-mcp-secret")
+
+    ok = client.post("/oauth/introspect", auth=basic, data={"token": "atok_alice"})
+    assert ok.status_code == 200
+
+    rejected = client.post(
+        "/oauth/token",
+        auth=basic,
+        data={
+            "grant_type": "not-a-grant",
+            "subject_token": "atok_alice",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        },
+    )
+    assert rejected.status_code == 400
+
+    still_ok = client.post("/oauth/introspect", auth=basic, data={"token": "atok_alice"})
+    assert still_ok.status_code == 200, still_ok.text
+
+    limited = client.post("/oauth/introspect", auth=basic, data={"token": "atok_alice"})
+    assert limited.status_code == 429
+    assert _err(limited)["retryable"] is True
+    assert limited.headers.get("Retry-After") == "60"
+
+
+def _succeed(client: TestClient, prompt: str = "A harbour at dawn") -> dict:
+    job_id = _create(client, prompt=prompt)["job_id"]
+    snapshot = _poll_until(client, job_id, "awaiting_confirmation")
+    client.post(
+        f"/open/v1/video-requests/{job_id}/plan-decisions",
+        headers=idem(f"confirm-{job_id}"),
+        json={"plan_id": snapshot["plan"]["plan_id"], "action": "confirm"},
+    )
+    return _poll_until(client, job_id, "succeeded")
+
+
+def test_get_job_resigns_expired_result_links(
+    client: TestClient, store: Store, clock: Clock
+) -> None:
+    done = _succeed(client)
+    job_id = done["job_id"]
+    original_play = done["result"]["play_url"]
+    original_cover = done["result"]["cover_url"]
+    original_play_exp = done["result"]["play_url_expires_at"]
+    original_cover_exp = done["result"]["cover_url_expires_at"]
+    actual = done["result"]["actual_credits"]
+
+    unchanged = client.get(f"/open/v1/jobs/{job_id}", headers=auth(ALICE))
+    assert unchanged.status_code == 200
+    assert unchanged.json()["result"]["play_url"] == original_play
+    assert unchanged.json()["result"]["play_url_expires_at"] == original_play_exp
+
+    clock.advance(3601)
+    renewed = client.get(f"/open/v1/jobs/{job_id}", headers=auth(ALICE))
+    assert renewed.status_code == 200
+    result = renewed.json()["result"]
+    assert result["play_url"] != original_play
+    assert result["cover_url"] != original_cover
+    assert result["play_url_expires_at"] != original_play_exp
+    assert result["cover_url_expires_at"] != original_cover_exp
+    assert result["actual_credits"] == actual
+
+    # Fresh links last the default 3600 seconds from "now".
+    expected = datetime.fromtimestamp(store.now() + 3600, tz=UTC).isoformat().replace("+00:00", "Z")
+    assert result["play_url_expires_at"] == expected
+    assert result["cover_url_expires_at"] == expected
+
+    stable = client.get(f"/open/v1/jobs/{job_id}", headers=auth(ALICE))
+    assert stable.json()["result"]["play_url"] == result["play_url"]
+    assert stable.json()["result"]["play_url_expires_at"] == result["play_url_expires_at"]

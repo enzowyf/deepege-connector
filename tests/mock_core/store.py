@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from deepege_connector.api import result_links_expired
 from deepege_connector.models import (
     POLL_AFTER_MS,
     TERMINAL_STATUSES,
@@ -36,6 +37,8 @@ DEFAULT_ADVANCE_AFTER_POLLS = 2
 DEFAULT_ESTIMATED_CREDITS = 100
 DEFAULT_MAX_CREDITS = 150
 DEFAULT_LINK_TTL = timedelta(seconds=3600)
+DEFAULT_RATE_LIMIT = 60
+DEFAULT_RATE_WINDOW_SECONDS = 60
 RECHARGE_URL = "https://www.deepege.com/account/credits"
 
 FLAG_ASK = "[ask]"
@@ -82,6 +85,12 @@ class ApiError(Exception):
             required_scope=self.required_scope,
             question=self.question,
         )
+
+
+@dataclass
+class _RateWindow:
+    start: float
+    count: int
 
 
 @dataclass
@@ -181,11 +190,16 @@ class Store:
         advance_after_ms: int = DEFAULT_ADVANCE_AFTER_MS,
         advance_after_polls: int = DEFAULT_ADVANCE_AFTER_POLLS,
         mcp_resource: str = "http://127.0.0.1:8081/mcp",
+        rate_limit: int = DEFAULT_RATE_LIMIT,
+        rate_window_seconds: int = DEFAULT_RATE_WINDOW_SECONDS,
     ) -> None:
         self.clock = clock or Clock()
         self.advance_after_ms = advance_after_ms
         self.advance_after_polls = advance_after_polls
         self.mcp_resource = mcp_resource
+        self.rate_limit = rate_limit
+        self.rate_window_seconds = rate_window_seconds
+        self._oauth_windows: dict[str, _RateWindow] = {}
         self.accounts: dict[str, Account] = {}
         self.jobs: dict[str, JobRecord] = {}
         self.idempotency: dict[tuple[str, str, str], IdempotencyRecord] = {}
@@ -364,6 +378,34 @@ class Store:
         if expected is None or expected != client_secret:
             raise ApiError(ErrorCode.UNAUTHORIZED, "Invalid service credentials.")
 
+    def enforce_oauth_rate_limit(self, client_id: str) -> None:
+        """Reject /oauth/* calls that have already used up this client's window.
+
+        Rejected requests are not recorded, so they do not consume quota.
+        """
+        now = self.now()
+        window = self._oauth_windows.get(client_id)
+        if window is None or now - window.start >= self.rate_window_seconds:
+            return
+        if window.count >= self.rate_limit:
+            remaining = window.start + self.rate_window_seconds - now
+            retry_after = int(remaining) if remaining == int(remaining) else int(remaining) + 1
+            if retry_after < 1:
+                retry_after = 1
+            raise ApiError(
+                ErrorCode.RATE_LIMITED,
+                "Too many requests.",
+                retry_after=retry_after,
+            )
+
+    def record_oauth_request(self, client_id: str) -> None:
+        now = self.now()
+        window = self._oauth_windows.get(client_id)
+        if window is None or now - window.start >= self.rate_window_seconds:
+            self._oauth_windows[client_id] = _RateWindow(start=now, count=1)
+            return
+        window.count += 1
+
     def lookup_token(self, token: str) -> Account | None:
         return self.accounts.get(token)
 
@@ -433,6 +475,7 @@ class Store:
         job = self._owned_job(account, job_id)
         job.polls_in_status += 1
         self._maybe_advance(account, job)
+        self._renew_expired_result_links(job)
         return self._to_job(job)
 
     def decide_plan(
@@ -582,10 +625,24 @@ class Store:
                 ErrorCode.RESULT_NOT_AVAILABLE,
                 "Result links can only be renewed for a succeeded job.",
             )
+        self._resign_result_links(job)
+        return self._to_job(job)
+
+    def _renew_expired_result_links(self, job: JobRecord) -> None:
+        if job.status is not JobStatus.SUCCEEDED or job.result is None:
+            return
+        if self._result_links_expired(job.result):
+            self._resign_result_links(job)
+
+    def _resign_result_links(self, job: JobRecord) -> None:
+        assert job.result is not None
         job.link_generation += 1
         actual = job.result.actual_credits
         job.result = self._build_result(job, actual_credits=actual)
-        return self._to_job(job)
+
+    def _result_links_expired(self, result: Result) -> bool:
+        now = datetime.fromtimestamp(self.now(), tz=UTC)
+        return result_links_expired(result, now=now)
 
     def me(self, account: Account) -> dict[str, Any]:
         _require_scope(account.principal, Scope.ACCOUNT_READ)
