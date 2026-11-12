@@ -397,6 +397,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IntrospectResponse"
+        "400":
+          $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
         "403":
@@ -1015,7 +1017,11 @@ components:
 
     TokenExchangeRequest:
       type: object
-      additionalProperties: false
+      description: >
+        Unknown extra form fields are ignored. The connector sends
+        `audience=deepege-open-v1` and no `resource`; the subject token's
+        own binding to the MCP resource is checked by the server.
+      additionalProperties: true
       required: [grant_type, subject_token, subject_token_type]
       properties:
         grant_type:
@@ -1033,8 +1039,10 @@ components:
           type: string
         resource:
           type: string
+          description: Not required. If sent, it must name the downstream Open API, not the MCP resource.
         audience:
           type: string
+          description: The downstream Open API audience. Only `deepege-open-v1` is accepted by default.
         scope:
           type: string
 

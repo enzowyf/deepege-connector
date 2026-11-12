@@ -229,6 +229,7 @@ class HostedTokenVerifier:
         self._client_id = settings.client_id
         self._client_secret = settings.client_secret
         self._resource = settings.mcp_resource
+        self._downstream_audience = settings.downstream_audience
         self._cache = cache or DownstreamTokenCache()
 
     async def verify_token(self, token: str) -> AccessToken | None:
@@ -299,7 +300,7 @@ class HostedTokenVerifier:
             user_token,
             client_id=self._client_id,
             client_secret=self._client_secret,
-            resource=self._resource,
+            audience=self._downstream_audience,
         )
         access_token = issued.get("access_token")
         if not isinstance(access_token, str) or not access_token:

@@ -215,7 +215,12 @@ def create_app(store: Store | None = None) -> FastAPI:
         audience: str | None = Form(default=None),
         scope: str | None = Form(default=None),
     ) -> dict[str, Any]:
-        del requested_token_type, resource, audience, scope
+        del requested_token_type, scope
+        if resource is not None or (audience or "deepege-open-v1") != "deepege-open-v1":
+            raise ApiError(
+                ErrorCode.INVALID_INPUT,
+                "audience must be deepege-open-v1; resource is not accepted here.",
+            )
         expected = "urn:ietf:params:oauth:grant-type:token-exchange"
         if grant_type != expected:
             raise ApiError(
