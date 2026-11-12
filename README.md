@@ -1,10 +1,12 @@
+English | [简体中文](README.zh-CN.md)
+
 # Deepege connector
 
-Deepege 连接器是面向 MCP 客户端的开源服务（Python，官方 MCP Python SDK 2.x，Streamable HTTP）。它通过版本化的 Deepege Open API（`/open/v1`）调用主服务，提供一句话出片等能力。本仓库目前交付到工作包 W2：共享类型、OpenAPI 契约、内存版 mock 主服务，以及可对 mock（或真实 Open API）运行的 MCP 服务。
+The Deepege connector is an open-source service for MCP clients (Python, official MCP Python SDK 2.x, Streamable HTTP). It talks to the main service through the versioned Deepege Open API (`/open/v1`) and provides capabilities such as creating a video from a single prompt. This repository currently delivers work package W2: shared types, the OpenAPI contract, an in-memory mock of the main service, and an MCP server that can run against the mock (or a real Open API).
 
-## 本地开发
+## Local development
 
-需要 Python 3.11+。
+Python 3.11+ is required.
 
 ```bash
 python3 -m venv .venv
@@ -12,7 +14,7 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-校验契约、运行测试、检查代码风格：
+Validate the contract, run the tests, and check code style:
 
 ```bash
 python -c "from openapi_spec_validator import validate; import yaml; validate(yaml.safe_load(open('openapi/open-v1.yaml')))"
@@ -21,7 +23,7 @@ ruff check .
 ruff format --check .
 ```
 
-私有关键词扫描在未配置清单时会跳过：
+The private keyword scan is skipped when no list is configured:
 
 ```bash
 python scripts/private_keyword_scan.py
@@ -29,27 +31,27 @@ python scripts/private_keyword_scan.py
 PRIVATE_KEYWORD_LIST_PATH=/path/to/keywords.txt python scripts/private_keyword_scan.py
 ```
 
-## 启动 mock 主服务
+## Start the mock main service
 
 ```bash
 python -m tests.mock_core --host 127.0.0.1 --port 8080
 ```
 
-也可用环境变量 `DEEPEGE_MOCK_HOST`、`DEEPEGE_MOCK_PORT`。服务只在内存中保存状态，进程退出即清空。以下为本地联调用的测试令牌，不是真实密钥。
+You can also use the environment variables `DEEPEGE_MOCK_HOST` and `DEEPEGE_MOCK_PORT`. The service keeps state in memory only; it is cleared when the process exits. The following tokens are for local development and are not real secrets.
 
-| Bearer 令牌 | 说明 |
+| Bearer token | Description |
 | --- | --- |
-| `sk-test-alice` | 余额 1000，完整 scope |
-| `sk-test-bob` | 另一租户，用来验证跨租户返回 `not_found` |
-| `sk-test-broke` | 余额 10，确认方案时返回 `credits_insufficient` |
-| `sk-test-readonly` | 只有读权限，创建任务返回 `insufficient_scope` |
-| `sk-test-disabled` | 已停用的 key，任何请求返回 401 `unauthorized` |
-| `sk-test-limited` | 任意请求返回 429 `rate_limited`，并带 `Retry-After` |
-| `atok_alice` | 用户侧 OAuth access token，用于 introspection / token-exchange |
+| `sk-test-alice` | Balance 1000, full scopes |
+| `sk-test-bob` | Another tenant, used to verify that cross-tenant access returns `not_found` |
+| `sk-test-broke` | Balance 10; confirming a plan returns `credits_insufficient` |
+| `sk-test-readonly` | Read-only scopes; creating a job returns `insufficient_scope` |
+| `sk-test-disabled` | A disabled key; every request returns 401 `unauthorized` |
+| `sk-test-limited` | Every request returns 429 `rate_limited` with a `Retry-After` header |
+| `atok_alice` | A user-facing OAuth access token, used for introspection / token-exchange |
 
-服务凭证（仅 `/oauth/introspect` 与 `/oauth/token`）：HTTP Basic `test-mcp-client` / `test-mcp-secret`。
+Service credentials (only for `/oauth/introspect` and `/oauth/token`): HTTP Basic `test-mcp-client` / `test-mcp-secret`.
 
-走通「创建 → 轮询到待确认 → 确认 → 轮询到成功」（mock 按契约返回 `poll_after_ms`，但为了便于本地联调，两次查询或约 200ms 后就会推进状态，不必真的等待 3–15 秒）：
+Walk through “create → poll until awaiting confirmation → confirm → poll until succeeded” (the mock returns `poll_after_ms` as specified by the contract, but for local development it advances after two GETs or about 200ms, so you do not have to wait 3–15 seconds):
 
 ```bash
 BASE=http://127.0.0.1:8080
@@ -81,11 +83,11 @@ for i in 1 2 3 4; do
 done
 ```
 
-创建时的 `prompt` 里可加入仅 mock 识别的标记（不属于公开契约）：`[ask]` 会在确认后进入 `awaiting_input`，`[fail]` 或 `[unrecoverable]` 会失败且 `retryable=true`（表示可新建任务，同一 job 不可恢复），`[quote-stale]` 使确认返回 `quote_stale`，`[planning-charge]` 让方案带上确认前已消耗积分，`[actual-round]` 让实扣积分与预计不同，`[no-cover]` 与 `[unknown-duration]` 让封面或时长为 null，`[no-max]` 让 `max_credits` 为 null（无上限）。停用的合作方 key 使用 `sk-test-disabled`，返回 401 `unauthorized`。
+The `prompt` used at creation may include flags that only the mock recognizes (they are not part of the public contract): `[ask]` enters `awaiting_input` after confirm; `[fail]` or `[unrecoverable]` fails with `retryable=true` (meaning you may start a new job; the same job is not recoverable); `[quote-stale]` makes confirm return `quote_stale`; `[planning-charge]` puts credits already consumed before confirm on the plan; `[actual-round]` makes the settled credits differ from the estimate; `[no-cover]` and `[unknown-duration]` leave the cover or duration null; `[no-max]` leaves `max_credits` null (no cap). A disabled partner key is `sk-test-disabled` and returns 401 `unauthorized`.
 
-## 启动 MCP 服务（对接 mock）
+## Start the MCP server (against the mock)
 
-先在 8080 端口启动 mock，再另开一个终端启动连接器（默认监听 `127.0.0.1:8080`，因此本地联调请改端口，避免和 mock 冲突）：
+Start the mock on port 8080 first, then start the connector in another terminal (it listens on `127.0.0.1:8080` by default, so change the port for local use to avoid colliding with the mock):
 
 ```bash
 export DEEPEGE_API_BASE_URL=http://127.0.0.1:8080
@@ -98,11 +100,11 @@ deepege-connector
 # 或：python -m deepege_connector
 ```
 
-服务以 Streamable HTTP 提供 MCP，路径为 `/mcp`，无会话粘滞（`stateless_http=true`）。连接器不会在日志里输出 API key 或带签名的播放 / 封面地址。
+The server serves MCP over Streamable HTTP at `/mcp`, with no session affinity (`stateless_http=true`). The connector never writes API keys or signed playback / cover URLs to its logs.
 
-### 客户端如何连接
+### How a client connects
 
-MCP 客户端应使用 Streamable HTTP，指向 `http://127.0.0.1:8081/mcp`，并在请求头中带上用户 API key：
+An MCP client should use Streamable HTTP, point at `http://127.0.0.1:8081/mcp`, and send the user API key in the request headers:
 
 ```json
 {
@@ -117,34 +119,34 @@ MCP 客户端应使用 Streamable HTTP，指向 `http://127.0.0.1:8081/mcp`，�
 }
 ```
 
-不同客户端的配置字段可能略有差异，但传输均为 Streamable HTTP，URL 为 `/mcp`，鉴权为 `Authorization: Bearer <api_key>`。若客户端暂时无法自定义请求头，可为进程设置 `DEEPEGE_API_KEY`，该默认值仅在请求未带 Authorization 时使用。
+Configuration field names may differ slightly across clients, but the transport is always Streamable HTTP, the URL is `/mcp`, and authentication is `Authorization: Bearer <api_key>`. If the client cannot set custom headers yet, set `DEEPEGE_API_KEY` on the process; that default is used only when the request has no Authorization header.
 
-这是自建（self-hosted）模式：连接器把用户 API key 原样作为 Bearer 转发给 `/open/v1`。官方托管模式的 OAuth 缝预留为 TODO，尚未实现：主服务将签发绑定到 MCP 资源的访问令牌（RFC 8707），连接器通过 introspection（RFC 7662）校验后，再用 token-exchange（RFC 8693）换成短时下游令牌调用 Open API，而不会把面向用户的 OAuth 访问令牌直接透传。
+This is self-hosted mode: the connector forwards the user API key unchanged as a Bearer token to `/open/v1`. The official hosted-mode OAuth seam is reserved as a TODO and is not implemented: the main service will issue access tokens bound to the MCP resource (RFC 8707); the connector will introspect them (RFC 7662) and then use token-exchange (RFC 8693) for a short-lived downstream token to call the Open API, and will not pass the user-facing OAuth access token through.
 
-### 工具
+### Tools
 
-连接器暴露五个工具。需要幂等键的调用会在调用方未提供 `idempotency_key` 时自动生成（符合 Open API 的 `Idempotency-Key` 规则）。Open API 的错误信封（`code` / `retryable` / `refund` 等）会映射为 MCP tool error；`429` 的 `Retry-After`（秒）会出现在错误载荷的 `retry_after` 字段中。
+The connector exposes five tools. Calls that require an idempotency key generate one automatically when the caller omits `idempotency_key` (matching the Open API `Idempotency-Key` rules). The Open API error envelope (`code` / `retryable` / `refund`, and so on) is mapped to an MCP tool error; the `Retry-After` value from a `429` (in seconds) appears as `retry_after` in the error payload.
 
-| 工具 | 参数 | 说明 |
+| Tool | Arguments | Description |
 | --- | --- | --- |
-| `deepege_create_video_request` | `prompt`（必填）；`aspect_ratio`、`duration_seconds`、`idempotency_key`（可选） | 用一句话创建视频任务，返回 job（含 `job_id`、`poll_after_ms`） |
-| `deepege_get_job` | `job_id`（必填）；`renew_result_links`（可选，默认 false） | 查询任务状态。进行中请按 `poll_after_ms` 等待后再查 |
-| `deepege_confirm_plan` | `job_id`、`plan_id`、`action`（`confirm` / `revise` / `reject`）；`comment`（修订时必填）；`idempotency_key`（可选） | 确认、修订或拒绝当前方案。非当前 `plan_id` 会返回 `quote_stale` |
-| `deepege_answer_question` | `job_id`、`question_id`；`option_id` 或 `text`；`idempotency_key`（可选） | 回答 `awaiting_input` 状态下的问题 |
-| `deepege_cancel_job` | `job_id` | 取消尚未结束的任务 |
+| `deepege_create_video_request` | `prompt` (required); `aspect_ratio`, `duration_seconds`, `idempotency_key` (optional) | Create a video job from a single prompt. Returns the job, including `job_id` and `poll_after_ms`. |
+| `deepege_get_job` | `job_id` (required); `renew_result_links` (optional, default false) | Fetch the job status. While the job is in progress, wait `poll_after_ms` before checking again. |
+| `deepege_confirm_plan` | `job_id`, `plan_id`, `action` (`confirm` / `revise` / `reject`); `comment` (required when revising); `idempotency_key` (optional) | Confirm, revise, or reject the current plan. A non-current `plan_id` returns `quote_stale`. |
+| `deepege_answer_question` | `job_id`, `question_id`; `option_id` or `text`; `idempotency_key` (optional) | Answer a question while the job is `awaiting_input`. |
+| `deepege_cancel_job` | `job_id` | Cancel a job that has not finished. |
 
-成片播放地址过期后，没有单独的第六个「续签链接」工具。连接器把续签放在 `deepege_get_job` 里：当任务已成功且 `play_url` 或 `cover_url` 过期时自动调用 `POST /open/v1/jobs/{job_id}/result-links`；也可以传 `renew_result_links=true` 提前换新链接。这样代理在轮询时不必再选另一个工具，也与契约「到期后再次 GET job 或调用 result-links」的用法一致。
+There is no separate sixth “renew links” tool after a playback URL expires. The connector renews links inside `deepege_get_job`: when the job has succeeded and `play_url` or `cover_url` has expired, it automatically calls `POST /open/v1/jobs/{job_id}/result-links`; you can also pass `renew_result_links=true` to refresh the links early. That way an agent polling the job does not have to pick another tool, and it matches the contract’s “GET the job again or call result-links after expiry” usage.
 
-失败任务本身不可恢复。若 `error.retryable` 为 true，应新建一个 `deepege_create_video_request`，而不是重试同一个 job。
+A failed job itself is not recoverable. If `error.retryable` is true, start a new `deepege_create_video_request` rather than retrying the same job.
 
-## 配置
+## Configuration
 
-运行时所有地址与凭证都从环境变量注入，仓库里不会写入真实地址或密钥：
+All addresses and credentials are injected from environment variables at runtime; the repository does not contain real addresses or secrets:
 
-- `DEEPEGE_API_BASE_URL`：主服务 Open API 的公开 origin（必填）
-- `DEEPEGE_MCP_HOST` / `DEEPEGE_MCP_PORT`：MCP 监听地址（默认 `127.0.0.1:8080`）
-- `DEEPEGE_API_KEY`：自建实例的默认用户 API key（请求头优先）
-- `DEEPEGE_CLIENT_ID` / `DEEPEGE_CLIENT_SECRET`：官方托管实例的服务凭证（预留给托管模式的 introspection / token-exchange，当前未使用）
+- `DEEPEGE_API_BASE_URL`: public origin of the main service Open API (required)
+- `DEEPEGE_MCP_HOST` / `DEEPEGE_MCP_PORT`: MCP listen address (default `127.0.0.1:8080`)
+- `DEEPEGE_API_KEY`: default user API key for a self-hosted instance (the request header takes precedence)
+- `DEEPEGE_CLIENT_ID` / `DEEPEGE_CLIENT_SECRET`: service credentials for the official hosted instance (reserved for hosted-mode introspection / token-exchange; currently unused)
 
 ## Docker
 
@@ -156,8 +158,8 @@ docker run --rm -p 8081:8080 \
   deepege-connector
 ```
 
-镜像内 MCP 默认监听 `0.0.0.0:8080`。`DEEPEGE_API_BASE_URL` 需指向可从容器访问的 Open API origin。
+Inside the image, the MCP server listens on `0.0.0.0:8080` by default. `DEEPEGE_API_BASE_URL` must point at an Open API origin reachable from the container.
 
-## 许可证
+## License
 
-[MIT](LICENSE)，版权所有 Deepege。
+[MIT](LICENSE), copyright Deepege.
