@@ -16,8 +16,6 @@
 | [ChatGPT（含 Codex）](chatgpt/README.zh-CN.md) | 优先核实（测试） | [`chatgpt/`](chatgpt/) |
 | [DeepSeek Harness（dsh）](dsh/README.zh-CN.md) | 优先核实（测试） | [`dsh/`](dsh/) |
 | [Grok Bot](grok-bot/README.zh-CN.md) | 优先核实（测试） | [`grok-bot/`](grok-bot/) |
-| [Claude Code](claude-code/README.zh-CN.md) | 已核实 | [`claude-code/`](claude-code/) |
-| [Claude Desktop](claude-desktop/README.zh-CN.md) | 已核实（stdio / mcp-remote） | [`claude-desktop/`](claude-desktop/) |
 | [其他客户端（通用）](generic/README.zh-CN.md) | 通用说明 | [`generic/`](generic/) |
 
 ## 通用远程 MCP

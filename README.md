@@ -126,7 +126,7 @@ This is self-hosted mode, the default: the connector forwards the user API key u
 Hosted mode (`DEEPEGE_AUTH_MODE=hosted`) turns the connector into an MCP resource server. It publishes RFC 9728 metadata at `/.well-known/oauth-protected-resource` (plus the resource path), challenges unauthenticated `/mcp` requests with `WWW-Authenticate`, introspects the caller’s access token (RFC 7662), requires it to be active, bound to `DEEPEGE_MCP_RESOURCE` (`aud` / `resource`), and to include the connector scopes, then exchanges it (RFC 8693) for a short-lived downstream token used to call `/open/v1`. The user-facing OAuth access token is never passed through. Downstream tokens are cached until shortly before they expire.
 
 
-Per-client setup templates and notes (WorkBuddy, ChatGPT including Codex, dsh, Grok Bot, Claude, and a generic Streamable HTTP / `mcp-remote` fallback) are in [`clients/`](clients/README.md). Formats that could not be confirmed against official docs are marked unverified.
+Per-client setup templates and notes (WorkBuddy, ChatGPT including Codex, dsh, Grok Bot, and a generic Streamable HTTP / `mcp-remote` fallback) are in [`clients/`](clients/README.md). Formats that could not be confirmed against official docs are marked unverified.
 
 A recommended agent workflow — create, poll with `poll_after_ms`, show the plan, and ask a human before confirming any spend — is in [`skills/deepege-video/SKILL.md`](skills/deepege-video/SKILL.md).
 

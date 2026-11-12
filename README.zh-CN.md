@@ -126,7 +126,7 @@ MCP 客户端应使用 Streamable HTTP，指向 `http://127.0.0.1:8081/mcp`，�
 托管模式（`DEEPEGE_AUTH_MODE=hosted`）会让连接器作为 MCP 资源服务器运行。它在 `/.well-known/oauth-protected-resource`（再加上资源路径）发布 RFC 9728 元数据，对未认证的 `/mcp` 请求返回 `WWW-Authenticate` 质询，通过 introspection（RFC 7662）校验调用方的访问令牌，要求其处于 active、绑定到 `DEEPEGE_MCP_RESOURCE`（`aud` / `resource`），并包含连接器所需的 scope，再用 token-exchange（RFC 8693）换成短时下游令牌调用 `/open/v1`。面向用户的 OAuth 访问令牌不会被透传。下游令牌会缓存到即将过期之前。
 
 
-各客户端的配置模板和说明（WorkBuddy、含 Codex 的 ChatGPT、dsh、Grok Bot、Claude，以及通用的 Streamable HTTP / `mcp-remote` 回退）见 [`clients/`](clients/README.zh-CN.md)。对照官方文档未能确认的格式会标明未核实。
+各客户端的配置模板和说明（WorkBuddy、含 Codex 的 ChatGPT、dsh、Grok Bot，以及通用的 Streamable HTTP / `mcp-remote` 回退）见 [`clients/`](clients/README.zh-CN.md)。对照官方文档未能确认的格式会标明未核实。
 
 推荐的代理流程——创建、按 `poll_after_ms` 轮询、展示方案，并在确认任何消耗之前询问人工——见 [`skills/deepege-video/SKILL.zh-CN.md`](skills/deepege-video/SKILL.zh-CN.md)。
 

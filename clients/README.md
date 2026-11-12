@@ -16,8 +16,6 @@ The four **priority-verified (beta)** clients were checked against current publi
 | [ChatGPT (incl. Codex)](chatgpt/README.md) | priority-verified (beta) | [`chatgpt/`](chatgpt/) |
 | [DeepSeek Harness (dsh)](dsh/README.md) | priority-verified (beta) | [`dsh/`](dsh/) |
 | [Grok Bot](grok-bot/README.md) | priority-verified (beta) | [`grok-bot/`](grok-bot/) |
-| [Claude Code](claude-code/README.md) | verified | [`claude-code/`](claude-code/) |
-| [Claude Desktop](claude-desktop/README.md) | verified (stdio / mcp-remote) | [`claude-desktop/`](claude-desktop/) |
 | [Other clients (generic)](generic/README.md) | guidance | [`generic/`](generic/) |
 
 ## Generic remote MCP
