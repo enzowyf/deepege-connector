@@ -56,6 +56,8 @@ info:
       with `rate_limited`, `retryable=true`, and a `Retry-After` header in
       seconds until the window resets. If the limiter itself is unavailable,
       the API fails closed with HTTP 500 `internal_error`, `retryable=true`.
+      `/oauth/*` endpoints are also rate-limited, per service `client_id`,
+      in the same 60-second window.
 
     Job status mapping (seven values):
       - `planning`: a plan is still being prepared; nothing is ready to confirm.
@@ -401,6 +403,8 @@ paths:
           $ref: "#/components/responses/Error"
         "429":
           $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
 
   /oauth/token:
     post:
@@ -436,6 +440,8 @@ paths:
         "403":
           $ref: "#/components/responses/Error"
         "429":
+          $ref: "#/components/responses/Error"
+        "500":
           $ref: "#/components/responses/Error"
 
 components:

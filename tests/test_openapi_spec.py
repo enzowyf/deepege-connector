@@ -54,3 +54,15 @@ def test_contract_has_no_internal_terms() -> None:
     ]
     hits = [term for term in forbidden if term in text]
     assert hits == []
+
+
+def test_oauth_paths_document_internal_error() -> None:
+    spec = load_spec()
+    for path in ("/oauth/introspect", "/oauth/token"):
+        assert "500" in spec["paths"][path]["post"]["responses"]
+
+
+def test_rate_limit_section_covers_oauth_clients() -> None:
+    description = load_spec()["info"]["description"]
+    assert "/oauth/*" in description
+    assert "client_id" in description
