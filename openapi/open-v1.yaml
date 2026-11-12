@@ -1,0 +1,1037 @@
+openapi: 3.1.0
+info:
+  title: Deepege Open API
+  version: 0.1.0
+  summary: Public HTTP API used by the Deepege connector
+  description: |
+    Versioned HTTP API (`/open/v1`) that the Deepege connector uses to talk to
+    the Deepege main service. This document is the public contract for a new
+    batch of conversational video-generation endpoints.
+
+    Breaking changes go to `/open/v2`. Additive, backward-compatible fields may
+    appear on `/open/v1` without a version bump of the path prefix; this file's
+    `info.version` records the contract revision.
+
+    Authentication:
+      - Business endpoints under `/open/v1` defined here accept a Bearer token
+        that is either a user API key or a short-lived downstream access token
+        obtained via token exchange.
+      - A missing, invalid, or disabled API key (including a disabled partner
+        key) returns HTTP 401 with `error.code=unauthorized`. Account-level
+        suspension, when it can be distinguished, returns HTTP 403 with
+        `account_suspended`.
+      - `/oauth/introspect` and `/oauth/token` (token-exchange grant) are
+        service-to-service endpoints and require client credentials.
+
+    Error envelope:
+      These new endpoints use an HTTP status code plus
+      `{ "error": { "code": "<string>", "message": "...", "retryable": bool, "refund": { ... } } }`.
+      This is not the `{ "code": <int>, "message", "data" }` shape used by
+      pre-existing `/open/v1` routes. The integer-code envelope does not apply
+      to this batch. `error.retryable=true` means the caller may start a new
+      `POST /open/v1/video-requests`. It does not mean the same job can be
+      retried; a failed job itself is not recoverable.
+
+    Credits:
+      Creating a video request does not charge production credits. Confirming a
+      plan authorizes production against the quote (`estimated_credits` and
+      `max_credits`). Production credits are reserved and settled during
+      making, and `result.actual_credits` may differ from `estimated_credits`.
+      Planning may already have consumed some credits; those appear on the plan
+      as `charges_before_confirm` (which may be 0). The same `Idempotency-Key`
+      with the same parameters is a replay and does not create a second job or
+      authorize twice. The same key with different parameters returns
+      `idempotency_conflict`.
+
+    Identifiers:
+      `job_id` is an opaque string issued by this API. It is not a `plan_id`
+      and it is not a conversation or session id. `plan_id` and `question_id`
+      are also opaque.
+
+    Job status mapping (seven values):
+      - `planning`: a plan is still being prepared; nothing is ready to confirm.
+      - `awaiting_confirmation`: a plan and quote are ready for the user.
+      - `awaiting_input`: planning is stuck, or the assistant has paused and
+        needs the user to answer a question.
+      - `producing`: start has been authorized and/or production is in
+        progress, including generation of the finished video
+        (starting / making / rendering the finished video).
+      - `succeeded`: the video is ready.
+      - `failed`: the job ended unsuccessfully and is not recoverable. If
+        `error.retryable` is true, the caller may start a new
+        `POST /open/v1/video-requests`; it must not retry this job.
+      - `cancelled`: the user rejected the plan or cancelled the job.
+
+    Jobs are bound to the caller; a job that belongs to another tenant is
+    reported as `not_found`.
+
+    Fields and values marked with `x-open-question` are pending product
+    confirmation and must not be treated as settled.
+  license:
+    name: MIT
+    identifier: MIT
+  x-open-question:
+    - "Whether partner API keys in the first delivery debit a partner-owned wallet (and attach works to that account) or a human user's wallet is pending confirmation."
+    - "Unit prices are expected to follow the same published price list as the official site, but this has not been confirmed in writing."
+    - "Whether a partner key is treated as holding all three scopes is pending confirmation."
+
+servers:
+  - url: /
+    description: The Open API origin is configured by the operator. No host is hardcoded.
+
+tags:
+  - name: Video requests
+    description: Conversational video-generation sessions.
+  - name: Jobs
+    description: Unified job lookup, cancellation, and result-link renewal.
+  - name: Account
+    description: The authenticated principal.
+  - name: OAuth
+    description: Token introspection (RFC 7662) and token exchange (RFC 8693).
+
+security:
+  - bearerAuth: []
+
+paths:
+  /open/v1/video-requests:
+    post:
+      operationId: createVideoRequest
+      tags: [Video requests]
+      summary: Create a conversational video-generation job
+      description: |
+        Submit a text prompt and optional preferences. Returns immediately with
+        an opaque `job_id` and `status=planning`. Production credits are not
+        charged at this step. The `Idempotency-Key` header is required.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VideoRequestCreate"
+      responses:
+        "200":
+          description: Job created (or an idempotent replay of a previous create).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /open/v1/video-requests/{job_id}/plan-decisions:
+    post:
+      operationId: decidePlan
+      tags: [Video requests]
+      summary: Confirm, revise, or reject a plan
+      description: |
+        `confirm` authorizes production against the current quote and moves the
+        job to `producing`. It does not by itself settle `actual_credits`.
+
+        `revise` accepts free-text comments only. The job returns to
+        `planning`, a new `plan_id` is issued when the next plan is ready, and
+        the previous `plan_id` is invalidated. Confirming a superseded
+        `plan_id` returns `quote_stale`.
+
+        `reject` cancels the job. Production credits should not have been
+        reserved yet.
+
+        Confirming the same current `plan_id` again authorizes at most once.
+        A `plan_id` that is not the current plan of this job (superseded,
+        voided, or not issued for this job) returns `quote_stale`.
+
+        If the quote is no longer valid because the price list version changed,
+        the manuscript changed, or the current `plan_id` was superseded, the
+        API returns `quote_stale`. Quotes are not invalidated by wall-clock
+        expiry; the plan object has no `expires_at`. An insufficient spendable
+        balance returns `credits_insufficient` with HTTP 402 and a recharge
+        URL; it is not reported as `quote_stale`.
+
+        The `Idempotency-Key` header is required.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlanDecision"
+      responses:
+        "200":
+          description: Decision accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "402":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /open/v1/video-requests/{job_id}/answers:
+    post:
+      operationId: answerQuestion
+      tags: [Video requests]
+      summary: Answer a mid-job question
+      description: |
+        Submit the user's answer to a question returned while the job was in
+        `awaiting_input`. `question_id` is opaque; the server may dispatch it
+        to more than one answering mechanism. The job then continues in
+        `planning` or `producing`. An invalid answer returns `invalid_input`
+        and the question is included in the error body so it can be asked again.
+        The `Idempotency-Key` header is required.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnswerRequest"
+      responses:
+        "200":
+          description: Answer accepted; the job continues.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /open/v1/jobs/{job_id}:
+    get:
+      operationId: getJob
+      tags: [Jobs]
+      summary: Get job status, plan, question, progress, result, or error
+      description: |
+        Unified job lookup. While the job is in progress the response includes
+        `poll_after_ms`, a hint for how long to wait before the next check.
+        Provisional values (TBD): `planning` 3000, `awaiting_confirmation` and
+        `awaiting_input` 10000, `producing` 15000.
+
+        Additional fields depend on `status`:
+          - `awaiting_confirmation`: `plan`
+          - `awaiting_input`: `question`
+          - `producing`: `progress` (optional) and the current `plan` (optional)
+          - `succeeded`: `result` (and the confirmed `plan`, optional)
+          - `failed`: `error`
+          - `cancelled`: `refund`
+
+        If a result play or cover URL has expired, call this endpoint again or
+        use `POST /open/v1/jobs/{job_id}/result-links` to obtain a fresh link.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Current job snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+
+  /open/v1/jobs/{job_id}/cancel:
+    post:
+      operationId: cancelJob
+      tags: [Jobs]
+      summary: Cancel a job and refund credits according to the published rules
+      description: |
+        Cancels an in-progress job. The response is the final job snapshot,
+        including `refund.status` (`full`, `partial`, or `none`). Cancelling
+        a job that is already `cancelled` is idempotent. A job that has already
+        `succeeded` or `failed` cannot be cancelled and returns
+        `job_not_cancellable`.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job cancelled (or already cancelled).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+
+  /open/v1/jobs/{job_id}/result-links:
+    post:
+      operationId: renewResultLinks
+      tags: [Jobs]
+      summary: Re-issue expired play and cover links
+      description: |
+        Issues a fresh time-limited `play_url` and, when a cover exists, a
+        fresh `cover_url` for a succeeded job. Each present URL carries its
+        own `expires_at`, with a default lifetime of 3600 seconds. `cover_url`
+        remains null when the finished video has no cover. Returns
+        `result_not_available` if the job has no result yet or is not in
+        `succeeded`.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job snapshot with renewed result links.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /open/v1/me:
+    get:
+      operationId: getMe
+      tags: [Account]
+      summary: Return the current principal, scopes, and credit balance
+      parameters: []
+      responses:
+        "200":
+          description: Authenticated principal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+
+  /oauth/introspect:
+    post:
+      operationId: introspectToken
+      tags: [OAuth]
+      summary: Introspect a token and resolve the principal (RFC 7662)
+      description: |
+        Service-to-service only. The caller authenticates with client
+        credentials. The body follows RFC 7662.
+
+        When the token is valid, `active` is true and the response includes
+        the account, scopes, client identifier, and grant identifier. When the
+        token is unknown, the response is `{ "active": false }`. When the
+        token is recognized but revoked or the account is suspended, `active`
+        is false and `revoked` and/or `banned` are set so the resource server
+        can return a precise error.
+      security:
+        - serviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/IntrospectRequest"
+      responses:
+        "200":
+          description: Introspection result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntrospectResponse"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+
+  /oauth/token:
+    post:
+      operationId: exchangeToken
+      tags: [OAuth]
+      summary: Exchange an MCP access token for a downstream Open API token (RFC 8693)
+      description: |
+        Service-to-service only. This contract describes the token-exchange
+        grant (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`).
+        The connector sends the user-facing access token as `subject_token`
+        and receives a short-lived downstream access token to call `/open/v1`.
+        Other grants that the authorization server may support are out of
+        scope for this document.
+      security:
+        - serviceAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/TokenExchangeRequest"
+      responses:
+        "200":
+          description: Downstream token issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenExchangeResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        A user API key, or a short-lived downstream access token obtained
+        through token exchange. A missing, invalid, or disabled key
+        (including a disabled partner key) is rejected as 401 unauthorized.
+    serviceAuth:
+      type: http
+      scheme: basic
+      description: >
+        OAuth 2.0 client credentials (client_id / client_secret) used by the
+        official connector to call introspection and token exchange.
+
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      description: Opaque job handle. Not a plan_id and not a conversation or session id.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9_-]+$"
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >
+        Caller-supplied key that makes the request safe to retry. Replaying
+        the same key with the same parameters returns the original result.
+        The same key with different parameters returns `idempotency_conflict`.
+        Do not change the key in order to poll for status.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+        pattern: "^[A-Za-z0-9._~-]+$"
+
+  responses:
+    Error:
+      description: |
+        Unified error envelope for this batch of endpoints. Not the
+        `{code: int, message, data}` shape used by pre-existing `/open/v1` routes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+
+  schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - quote_stale
+        - credits_insufficient
+        - invalid_input
+        - idempotency_conflict
+        - not_found
+        - insufficient_scope
+        - rate_limited
+        - unauthorized
+        - account_suspended
+        - job_not_cancellable
+        - result_not_available
+        - internal_error
+
+    RefundStatus:
+      type: string
+      enum: [full, partial, none]
+      description: >
+        `full` returns reserved or settled production credits, `partial`
+        returns part of them, `none` means nothing was reserved or nothing
+        was returned.
+
+    Refund:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/RefundStatus"
+      x-open-question: "Whether refund also reports a numeric credit amount is pending confirmation."
+
+    JobStatus:
+      type: string
+      enum:
+        - planning
+        - awaiting_confirmation
+        - awaiting_input
+        - producing
+        - succeeded
+        - failed
+        - cancelled
+
+    AuthMethod:
+      type: string
+      enum: [api_key, oauth]
+
+    QuestionKind:
+      type: string
+      enum: [choice, text]
+
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+          description: User-readable reason. Contains facts only, not a recommended next step.
+        retryable:
+          type: boolean
+          description: >
+            If true, the caller may start a new POST /open/v1/video-requests.
+            It does not mean this job can be retried; a failed job is not
+            recoverable.
+        refund:
+          $ref: "#/components/schemas/Refund"
+        recharge_url:
+          type: string
+          format: uri
+          description: Official top-up page. Present when `code` is `credits_insufficient`.
+          x-open-question: "The official top-up URL is not confirmed. The site currently opens an in-app account dialog after sign-in rather than a standalone public URL."
+        required_scope:
+          type: string
+          description: Present when `code` is `insufficient_scope`.
+        question:
+          $ref: "#/components/schemas/Question"
+          description: Present when an answer is rejected, so the question can be asked again.
+
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      description: |
+        HTTP error envelope for this batch of new endpoints only. Pre-existing
+        `/open/v1` routes use `{code: int, message, data}` and are unchanged.
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+
+    Preferences:
+      type: object
+      additionalProperties: false
+      properties:
+        aspect_ratio:
+          type: string
+          enum: ["16:9", "9:16", "1:1"]
+          description: Preferred frame aspect ratio.
+          x-open-question: "The allowed aspect-ratio set has not been confirmed."
+        duration_seconds:
+          type: integer
+          minimum: 1
+          maximum: 600
+          description: Preferred finished-video duration in seconds.
+          x-open-question: "The allowed duration range has not been confirmed."
+
+    VideoRequestCreate:
+      type: object
+      additionalProperties: false
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: The user's video request in natural language.
+        preferences:
+          $ref: "#/components/schemas/Preferences"
+
+    Plan:
+      type: object
+      additionalProperties: false
+      required:
+        - plan_id
+        - title
+        - duration_seconds
+        - style
+        - estimated_credits
+        - max_credits
+        - credit_balance
+        - charges_before_confirm
+      properties:
+        plan_id:
+          type: string
+          minLength: 1
+          description: Opaque identifier of this plan. Distinct from job_id. A superseded plan_id cannot be confirmed.
+        title:
+          type: [string, "null"]
+          description: Plan title. Null when the plan carries no title; the field is always present.
+        duration_seconds:
+          type: [integer, "null"]
+          minimum: 1
+          description: >
+            Planned finished-video duration in seconds. Null when the plan has
+            no duration yet; the field is always present. When not null, the
+            value is at least 1.
+        style:
+          type: [string, "null"]
+          description: A short, user-visible style label. Null when the plan carries none; the field is always present.
+        estimated_credits:
+          type: integer
+          minimum: 0
+          description: Quoted estimate. Settlement may differ; see result.actual_credits.
+        max_credits:
+          type: [integer, "null"]
+          minimum: 1
+          description: >
+            Quoted upper bound. This field is always present in the plan.
+            Null means there is no cap. 0 is not used to mean "no cap".
+        credit_balance:
+          type: integer
+          minimum: 0
+          description: The caller's spendable balance at quote time.
+        charges_before_confirm:
+          type: [integer, "null"]
+          minimum: 0
+          description: >
+            Credits already consumed during planning, before confirm. May be
+            0. Null means the amount is not known; it does not mean free.
+          x-open-question: "Whether planning-phase model charges must be listed here, and whether they sit outside the 'no production charge before confirm' rule, is pending product confirmation."
+
+    QuestionOption:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+
+    Question:
+      type: object
+      additionalProperties: false
+      required: [question_id, kind, text, options]
+      properties:
+        question_id:
+          type: string
+          minLength: 1
+          description: >
+            Opaque identifier. The server may dispatch it to more than one
+            answering mechanism; callers must treat it as an uninterpreted token.
+        kind:
+          $ref: "#/components/schemas/QuestionKind"
+        text:
+          type: string
+          description: The question to show the user, verbatim.
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuestionOption"
+          description: Selectable options when kind is choice. Empty when kind is text.
+
+    Progress:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: A short, user-visible progress note.
+        percent:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+
+    Result:
+      type: object
+      additionalProperties: false
+      required:
+        - play_url
+        - play_url_expires_at
+        - cover_url
+        - cover_url_expires_at
+        - web_url
+        - duration_seconds
+        - actual_credits
+      properties:
+        play_url:
+          type: string
+          format: uri
+          description: Time-limited playback URL.
+        play_url_expires_at:
+          type: string
+          format: date-time
+          description: UTC instant when `play_url` expires. Default lifetime is 3600 seconds.
+          x-open-question: "Default lifetime is 3600 seconds, matching the existing Open API signed-URL default. Confirm whether play and cover must always share the same TTL."
+        cover_url:
+          type: [string, "null"]
+          format: uri
+          description: >
+            Time-limited cover image URL. Null when the finished video has
+            no cover; a placeholder image must not be invented.
+        cover_url_expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            UTC instant when `cover_url` expires. Null when `cover_url` is
+            null. Default lifetime is 3600 seconds when a cover exists.
+          x-open-question: "Default lifetime is 3600 seconds. Confirm whether play and cover must always share the same TTL."
+        web_url:
+          type: string
+          format: uri
+          description: Official site page for this work. Opening it may require sign-in.
+          x-open-question: "The canonical official work-page URL is not confirmed. A signed-in session page may be used; a dedicated read-only work page would be a new product surface."
+        duration_seconds:
+          type: [integer, "null"]
+          minimum: 1
+          description: >
+            Finished-video duration in seconds. Null when the duration is
+            not known. When not null, the value is at least 1.
+        actual_credits:
+          type: [integer, "null"]
+          minimum: 0
+          description: >
+            Credits actually settled for this job. May be lower or higher than
+            estimated_credits. Null means the settled amount is not known; it
+            does not mean free. The field is always present.
+
+    JobFailure:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable, refund]
+      properties:
+        code:
+          type: string
+          description: A stable machine-readable failure code.
+        message:
+          type: string
+          description: User-readable reason. Facts only.
+        retryable:
+          type: boolean
+          description: >
+            If true, the caller may start a new POST /open/v1/video-requests.
+            It does not mean this job can be retried; a failed job is not
+            recoverable.
+        refund:
+          $ref: "#/components/schemas/Refund"
+
+    Job:
+      type: object
+      additionalProperties: false
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+          minLength: 1
+          description: Opaque job handle. It is not a plan_id or a conversation id.
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        poll_after_ms:
+          type: [integer, "null"]
+          minimum: 0
+          description: >
+            Hint for how long to wait before the next status check, in
+            milliseconds. Present while the job is in progress; omitted or
+            null when the job has reached a terminal status. Provisional
+            values (TBD): planning 3000; awaiting_confirmation and
+            awaiting_input 10000; producing 15000.
+          x-open-question: "Provisional poll_after_ms values: planning 3000, awaiting_confirmation and awaiting_input 10000, producing 15000. To be confirmed after client trials."
+        plan:
+          $ref: "#/components/schemas/Plan"
+        question:
+          $ref: "#/components/schemas/Question"
+        progress:
+          $ref: "#/components/schemas/Progress"
+        result:
+          $ref: "#/components/schemas/Result"
+        error:
+          $ref: "#/components/schemas/JobFailure"
+        refund:
+          $ref: "#/components/schemas/Refund"
+      allOf:
+        - if:
+            properties:
+              status:
+                enum: [planning, awaiting_confirmation, awaiting_input, producing]
+            required: [status]
+          then:
+            required: [poll_after_ms]
+        - if:
+            properties:
+              status:
+                const: awaiting_confirmation
+            required: [status]
+          then:
+            required: [plan]
+        - if:
+            properties:
+              status:
+                const: awaiting_input
+            required: [status]
+          then:
+            required: [question]
+        - if:
+            properties:
+              status:
+                const: succeeded
+            required: [status]
+          then:
+            required: [result]
+        - if:
+            properties:
+              status:
+                const: failed
+            required: [status]
+          then:
+            required: [error]
+        - if:
+            properties:
+              status:
+                const: cancelled
+            required: [status]
+          then:
+            required: [refund]
+
+    PlanAction:
+      type: string
+      enum: [confirm, revise, reject]
+
+    PlanDecision:
+      type: object
+      additionalProperties: false
+      required: [plan_id, action]
+      properties:
+        plan_id:
+          type: string
+          minLength: 1
+        action:
+          $ref: "#/components/schemas/PlanAction"
+        comment:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: Required when `action` is `revise`. Free-text revision only; structured setting changes are not part of this contract.
+          x-open-question: "This contract models revise as free text only. Whether a later revision should also expose structured setting changes is pending confirmation."
+      allOf:
+        - if:
+            properties:
+              action:
+                const: revise
+            required: [action]
+          then:
+            required: [comment]
+
+    AnswerRequest:
+      type: object
+      additionalProperties: false
+      required: [question_id]
+      properties:
+        question_id:
+          type: string
+          minLength: 1
+          description: Opaque question handle from the current job snapshot.
+        option_id:
+          type: string
+          description: Identifier of a selected option. Used when the question kind is choice.
+        text:
+          type: string
+          minLength: 1
+          maxLength: 8000
+          description: Free-text answer. Required when the question kind is text; also allowed when options are present.
+      anyOf:
+        - required: [option_id]
+        - required: [text]
+
+    Me:
+      type: object
+      additionalProperties: false
+      required:
+        - account_id
+        - tenant_id
+        - auth_method
+        - scopes
+        - credit_balance
+      properties:
+        account_id:
+          type: string
+        tenant_id:
+          type: string
+        auth_method:
+          $ref: "#/components/schemas/AuthMethod"
+        client_id:
+          type: [string, "null"]
+        key_id:
+          type: [string, "null"]
+        grant_id:
+          type: [string, "null"]
+        scopes:
+          type: array
+          items:
+            type: string
+          description: >
+            The scopes are account:read, jobs:read, and generate:video.
+            account:read allows GET /open/v1/me. jobs:read allows reading a
+            job (GET /open/v1/jobs/{job_id}). generate:video allows creating
+            a video request, deciding a plan, answering a question, and
+            cancelling a job. A call without the needed scope returns 403
+            with code insufficient_scope and required_scope.
+          x-open-question: "Which scope covers renewing result links, and whether a partner key is treated as holding all three scopes, are pending confirmation."
+        credit_balance:
+          type: integer
+          minimum: 0
+          description: Spendable credit balance for this principal.
+
+    IntrospectRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 1
+        token_type_hint:
+          type: string
+          description: Optional RFC 7662 hint, e.g. `access_token`.
+
+    IntrospectResponse:
+      type: object
+      additionalProperties: true
+      required: [active]
+      properties:
+        active:
+          type: boolean
+        scope:
+          type: string
+          description: Space-separated scopes, as in RFC 7662.
+        scopes:
+          type: array
+          items:
+            type: string
+          description: The same scopes as an array, for convenience.
+        client_id:
+          type: string
+        token_type:
+          type: string
+        exp:
+          type: integer
+        iat:
+          type: integer
+        sub:
+          type: string
+        aud:
+          type: string
+        iss:
+          type: string
+        account_id:
+          type: string
+        tenant_id:
+          type: string
+        grant_id:
+          type: string
+        revoked:
+          type: boolean
+        banned:
+          type: boolean
+
+    TokenExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [grant_type, subject_token, subject_token_type]
+      properties:
+        grant_type:
+          type: string
+          const: "urn:ietf:params:oauth:grant-type:token-exchange"
+        subject_token:
+          type: string
+          minLength: 1
+          description: The user-facing access token presented to the connector.
+        subject_token_type:
+          type: string
+          description: >
+            Typically `urn:ietf:params:oauth:token-type:access_token`.
+        requested_token_type:
+          type: string
+        resource:
+          type: string
+        audience:
+          type: string
+        scope:
+          type: string
+
+    TokenExchangeResponse:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, issued_token_type]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          const: Bearer
+        issued_token_type:
+          type: string
+          description: Typically `urn:ietf:params:oauth:token-type:access_token`.
+        expires_in:
+          type: integer
+          minimum: 1
+        scope:
+          type: string
