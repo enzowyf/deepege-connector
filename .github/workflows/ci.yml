@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package and dev tools
+        run: pip install -e '.[dev]'
+
+      - name: Ruff
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Validate OpenAPI contract
+        run: python -c "from openapi_spec_validator import validate; from pathlib import Path; import yaml; validate(yaml.safe_load(Path('openapi/open-v1.yaml').read_text()))"
+
+      - name: Pytest
+        run: pytest
+
+      - name: Gitleaks
+        run: |
+          set -euo pipefail
+          VERSION=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tgz
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --verbose --redact --exit-code 1
+
+      - name: Private keyword scan
+        env:
+          PRIVATE_KEYWORD_LIST_PATH: ${{ vars.PRIVATE_KEYWORD_LIST_PATH }}
+        run: python scripts/private_keyword_scan.py
