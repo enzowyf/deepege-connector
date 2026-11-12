@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
@@ -21,7 +22,13 @@ from deepege_connector.api import (
     resolve_idempotency_key,
     should_renew_result_links,
 )
-from deepege_connector.auth import MissingCredentialsError, resolve_bearer_token
+from deepege_connector.auth import (
+    HOSTED_SCOPES,
+    HostedAuthError,
+    HostedTokenVerifier,
+    MissingCredentialsError,
+    resolve_bearer_token,
+)
 from deepege_connector.config import Settings
 from deepege_connector.models import (
     AnswerRequest,
@@ -73,19 +80,6 @@ def _headers_from(ctx: Context) -> Mapping[str, str] | None:
         return None
 
 
-def _api_key(ctx: Context, settings: Settings) -> str:
-    try:
-        return resolve_bearer_token(_headers_from(ctx), fallback=settings.api_key)
-    except MissingCredentialsError as exc:
-        raise ToolError(
-            _error_json(
-                ErrorCode.UNAUTHORIZED.value,
-                str(exc),
-                retryable=False,
-            )
-        ) from exc
-
-
 def _raise_validation(exc: ValidationError) -> None:
     messages = []
     for err in exc.errors():
@@ -109,15 +103,29 @@ def create_server(
     """Build an MCP server bound to an Open API client.
 
     Tools call the Open API with the caller's user API key (self-hosted
-    mode). Hosted-mode OAuth (RFC 8707 / 7662 / 8693) is a reserved seam
-    in ``deepege_connector.auth`` and is not implemented here.
+    mode, the default) or with a short-lived downstream token obtained
+    through hosted-mode introspection and token-exchange.
     """
     settings = settings or Settings.from_env()
+    settings.validate()
     if api_client is None:
         if not settings.api_base_url:
             raise ValueError("DEEPEGE_API_BASE_URL is required")
         api_client = OpenAPIClient(settings.api_base_url)
     client = api_client
+    verifier: HostedTokenVerifier | None = None
+    auth_settings: AuthSettings | None = None
+    if settings.hosted:
+        issuer = settings.authorization_server or settings.api_base_url
+        if not issuer or not settings.mcp_resource:
+            raise ValueError("hosted mode requires DEEPEGE_API_BASE_URL and DEEPEGE_MCP_RESOURCE")
+        verifier = HostedTokenVerifier(client, settings)
+        auth_settings = AuthSettings(
+            issuer_url=issuer,
+            resource_server_url=settings.mcp_resource,
+            required_scopes=list(HOSTED_SCOPES),
+            validate_token_resource=True,
+        )
 
     @asynccontextmanager
     async def lifespan(_server: MCPServer) -> AsyncIterator[dict[str, Any]]:
@@ -133,7 +141,29 @@ def create_server(
         instructions=_INSTRUCTIONS,
         version=__version__,
         lifespan=lifespan,
+        auth=auth_settings,
+        token_verifier=verifier,
     )
+
+    async def _outbound_token(ctx: Context) -> str:
+        if verifier is not None:
+            try:
+                token = resolve_bearer_token(_headers_from(ctx), fallback=None)
+                return await verifier.outbound_token(token)
+            except (MissingCredentialsError, HostedAuthError) as exc:
+                raise ToolError(
+                    _error_json(ErrorCode.UNAUTHORIZED.value, str(exc), retryable=False)
+                ) from exc
+        try:
+            return resolve_bearer_token(_headers_from(ctx), fallback=settings.api_key)
+        except MissingCredentialsError as exc:
+            raise ToolError(
+                _error_json(
+                    ErrorCode.UNAUTHORIZED.value,
+                    str(exc),
+                    retryable=False,
+                )
+            ) from exc
 
     @mcp.tool(
         name="deepege_create_video_request",
@@ -153,7 +183,7 @@ def create_server(
         duration_seconds: int | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        api_key = _api_key(ctx, settings)
+        api_key = await _outbound_token(ctx)
         try:
             preferences = None
             if aspect_ratio is not None or duration_seconds is not None:
@@ -187,7 +217,7 @@ def create_server(
         ctx: Context,
         renew_result_links: bool = False,
     ) -> dict[str, Any]:
-        api_key = _api_key(ctx, settings)
+        api_key = await _outbound_token(ctx)
         try:
             job = await client.get_job(api_key, job_id)
             if should_renew_result_links(job, force=renew_result_links):
@@ -216,7 +246,7 @@ def create_server(
         comment: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        api_key = _api_key(ctx, settings)
+        api_key = await _outbound_token(ctx)
         try:
             body = PlanDecision(plan_id=plan_id, action=action, comment=comment)
             key = resolve_idempotency_key(idempotency_key)
@@ -244,7 +274,7 @@ def create_server(
         text: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        api_key = _api_key(ctx, settings)
+        api_key = await _outbound_token(ctx)
         try:
             body = AnswerRequest(question_id=question_id, option_id=option_id, text=text)
             key = resolve_idempotency_key(idempotency_key)
@@ -264,7 +294,7 @@ def create_server(
         ),
     )
     async def deepege_cancel_job(job_id: str, ctx: Context) -> dict[str, Any]:
-        api_key = _api_key(ctx, settings)
+        api_key = await _outbound_token(ctx)
         try:
             job = await client.cancel_job(api_key, job_id)
         except OpenAPIError as exc:

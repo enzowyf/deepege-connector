@@ -358,6 +358,97 @@ class OpenAPIClient:
             return data
         raise error_from_response(response)
 
+    async def introspect(
+        self,
+        token: str,
+        *,
+        client_id: str,
+        client_secret: str,
+    ) -> dict[str, Any]:
+        """RFC 7662 token introspection. The token itself is never logged."""
+        data = await self._service_form(
+            "/oauth/introspect",
+            client_id=client_id,
+            client_secret=client_secret,
+            form={"token": token},
+        )
+        return data
+
+    async def exchange_token(
+        self,
+        subject_token: str,
+        *,
+        client_id: str,
+        client_secret: str,
+        resource: str | None = None,
+        audience: str | None = None,
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        """RFC 8693 token exchange. The subject token is never logged."""
+        form: dict[str, str] = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": subject_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        }
+        if resource:
+            form["resource"] = resource
+        if audience:
+            form["audience"] = audience
+        if scope:
+            form["scope"] = scope
+        return await self._service_form(
+            "/oauth/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            form=form,
+        )
+
+    async def _service_form(
+        self,
+        path: str,
+        *,
+        client_id: str,
+        client_secret: str,
+        form: dict[str, str],
+    ) -> dict[str, Any]:
+        logger.info("Open API POST %s", path)
+        try:
+            response = await self._client.post(
+                path,
+                auth=(client_id, client_secret),
+                data=form,
+                headers={"Accept": "application/json"},
+            )
+        except httpx.RequestError as exc:
+            logger.warning("Open API request failed: POST %s", path)
+            raise OpenAPIError(
+                code=ErrorCode.INTERNAL_ERROR.value,
+                message="The Open API is temporarily unavailable.",
+                retryable=True,
+                http_status=None,
+            ) from exc
+        logger.info("Open API POST %s -> %s", path, response.status_code)
+        if response.is_success:
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise OpenAPIError(
+                    code=ErrorCode.INTERNAL_ERROR.value,
+                    message="The Open API returned an unexpected response.",
+                    retryable=True,
+                    http_status=response.status_code,
+                ) from exc
+            if not isinstance(data, dict):
+                raise OpenAPIError(
+                    code=ErrorCode.INTERNAL_ERROR.value,
+                    message="The Open API returned an unexpected response.",
+                    retryable=True,
+                    http_status=response.status_code,
+                )
+            return data
+        raise error_from_response(response)
+
 
 def job_payload(job: Job) -> dict[str, Any]:
     """Serialize a job for a tool result, keeping required-null fields."""

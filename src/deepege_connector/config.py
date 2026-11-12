@@ -27,9 +27,9 @@ class Settings:
     ``Authorization`` header, when present, takes precedence).
 
     ``client_id`` / ``client_secret`` are the official hosted connector's
-    service credentials. They are reserved for the hosted-mode OAuth seam
-    (introspection and token exchange) and are unused until that seam is
-    implemented.
+    service credentials, used in hosted mode for introspection and token
+    exchange. ``mcp_resource`` is the MCP resource identifier (RFC 8707 /
+    RFC 9728). Self-hosted passthrough is the default.
     """
 
     api_base_url: str | None
@@ -38,6 +38,30 @@ class Settings:
     client_id: str | None
     client_secret: str | None
     api_key: str | None = None
+    auth_mode: str = "self_hosted"
+    mcp_resource: str | None = None
+    authorization_server: str | None = None
+
+    @property
+    def hosted(self) -> bool:
+        return self.auth_mode == "hosted"
+
+    def validate(self) -> None:
+        if self.auth_mode not in {"self_hosted", "hosted"}:
+            raise ValueError("DEEPEGE_AUTH_MODE must be self_hosted or hosted")
+        if not self.hosted:
+            return
+        missing: list[str] = []
+        if not self.api_base_url:
+            missing.append("DEEPEGE_API_BASE_URL")
+        if not self.client_id:
+            missing.append("DEEPEGE_CLIENT_ID")
+        if not self.client_secret:
+            missing.append("DEEPEGE_CLIENT_SECRET")
+        if not self.mcp_resource:
+            missing.append("DEEPEGE_MCP_RESOURCE")
+        if missing:
+            raise ValueError("hosted mode requires " + ", ".join(missing))
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -46,11 +70,16 @@ class Settings:
             port = int(port_raw)
         except ValueError as exc:
             raise ValueError("DEEPEGE_MCP_PORT must be an integer") from exc
-        return cls(
+        settings = cls(
             api_base_url=_env("DEEPEGE_API_BASE_URL"),
             mcp_host=_env("DEEPEGE_MCP_HOST", "127.0.0.1") or "127.0.0.1",
             mcp_port=port,
             client_id=_env("DEEPEGE_CLIENT_ID"),
             client_secret=_env("DEEPEGE_CLIENT_SECRET"),
             api_key=_env("DEEPEGE_API_KEY"),
+            auth_mode=(_env("DEEPEGE_AUTH_MODE", "self_hosted") or "self_hosted"),
+            mcp_resource=_env("DEEPEGE_MCP_RESOURCE"),
+            authorization_server=_env("DEEPEGE_AUTHORIZATION_SERVER"),
         )
+        settings.validate()
+        return settings
