@@ -45,7 +45,7 @@ dev = [
 deepege-connector = "deepege_connector.server:main"
 
 [project.urls]
-Homepage = "https://github.com/deepege/deepege-connector"
+Homepage = "https://github.com/enzowyf/deepege-connector"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
