@@ -11,6 +11,7 @@ from typing import Any
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import ValidationError
 
 from deepege_connector import __version__
@@ -301,7 +302,35 @@ def create_server(
             raise _map_error(exc) from exc
         return job_payload(job)
 
+    @mcp.custom_route("/healthz", methods=["GET"])
+    async def healthz(_request: Any) -> Any:
+        from starlette.responses import JSONResponse
+
+        return JSONResponse({"status": "ok", "version": __version__})
+
     return mcp
+
+
+def transport_security(settings: Settings) -> TransportSecuritySettings | None:
+    """DNS-rebinding protection that also admits the public proxy host names.
+
+    Without ``DEEPEGE_ALLOWED_HOSTS`` the SDK default applies (localhost only
+    when bound to loopback). Behind a reverse proxy, list the public host
+    names, e.g. ``stage.deepege.com``.
+    """
+    if not settings.allowed_hosts:
+        return None
+    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*", *settings.allowed_hosts]
+    origins = [
+        "http://127.0.0.1:*",
+        "http://localhost:*",
+        *(f"https://{h}" for h in settings.allowed_hosts),
+    ]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+        allowed_origins=origins,
+    )
 
 
 def main() -> None:
@@ -326,6 +355,7 @@ def main() -> None:
         port=settings.mcp_port,
         streamable_http_path="/mcp",
         stateless_http=True,
+        transport_security=transport_security(settings),
     )
 
 

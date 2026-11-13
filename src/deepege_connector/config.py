@@ -42,6 +42,7 @@ class Settings:
     mcp_resource: str | None = None
     authorization_server: str | None = None
     downstream_audience: str = "deepege-open-v1"
+    allowed_hosts: tuple[str, ...] = ()
 
     @property
     def hosted(self) -> bool:
@@ -81,6 +82,9 @@ class Settings:
             auth_mode=(_env("DEEPEGE_AUTH_MODE", "self_hosted") or "self_hosted"),
             mcp_resource=_env("DEEPEGE_MCP_RESOURCE"),
             authorization_server=_env("DEEPEGE_AUTHORIZATION_SERVER"),
+            allowed_hosts=tuple(
+                h.strip() for h in (_env("DEEPEGE_ALLOWED_HOSTS") or "").split(",") if h.strip()
+            ),
             downstream_audience=(
                 _env("DEEPEGE_DOWNSTREAM_AUDIENCE", "deepege-open-v1") or "deepege-open-v1"
             ),
